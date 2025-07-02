@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Hedge UniV3 IL with Long Straddle</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.0/dist/chartjs-plugin-zoom.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f9f9f9;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 30px;
+    }
+
+    h2 {
+      margin-bottom: 10px;
+    }
+
+    canvas {
+      background: white;
+      border: 1px solid #ccc;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .sliders {
+      margin-top: 20px;
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .slider-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <h2>Hedging UniV3 Impermanent Loss with a Long Straddle</h2>
+  <canvas id="hedgeChart" width="800" height="500"></canvas>
+
+  <div class="sliders">
+    <div class="slider-container">
+      <label for="costSlider">Straddle Cost: <span id="costLabel">0.02</span></label>
+      <input type="range" id="costSlider" min="0" max="0.1" step="0.005" value="0.02">
+    </div>
+    <div class="slider-container">
+      <label for="scaleSlider">Straddle Scale: <span id="scaleLabel">0.85</span></label>
+      <input type="range" id="scaleSlider" min="0.1" max="20.0" step="0.05" value="0.85">
+    </div>
+    <div class="slider-container">
+      <label for="rSlider">UniV3 Range Width (r): <span id="rLabel">1.003</span></label>
+      <input type="range" id="rSlider" min="1.001" max="2.5" step="0.001" value="1.003">
+    </div>
+  </div>
+
+  <script>
+    const priceChanges = [];
+    for (let i = -0.25; i <= 0.25; i += 0.01) {
+      priceChanges.push((i * 100).toFixed(0));
+    }
+
+    const ctx = document.getElementById('hedgeChart').getContext('2d');
+
+    function calculateData(cost, scale, r) {
+      const impLoss = [];
+      const straddlePnl = [];
+      const combined = [];
+
+      const lower = 1 / r;
+      const upper = r;
+
+      for (let i = -0.25; i <= 0.25; i += 0.01) {
+        const p = 1 + i;
+        let il;
+
+        if (p < lower || p > upper) {
+          il = 1; // 100% loss outside of the range
+        } else {
+          const sqrtL = Math.sqrt(lower);
+          const sqrtU = Math.sqrt(upper);
+          const sqrtP = Math.sqrt(p);
+          const x = (sqrtP - sqrtL) / (sqrtU - sqrtL);
+          const y = 1 - x;
+          const value = 2 * Math.sqrt(x * y);
+          il = 1 - value; // Uniswap v3 IL shape per Lambert article
+        }
+
+        impLoss.push(-il);  // invert for right axis
+
+        const call = Math.max(p - 1, 0);
+        const put = Math.max(1 - p, 0);
+        const straddle = scale * (call + put - cost);
+        straddlePnl.push(straddle);
+
+        combined.push(-il + straddle);
+      }
+
+      return {
+        impLoss: impLoss.map(x => x * 100),
+        straddlePnl: straddlePnl.map(x => x * 100),
+        combined: combined.map(x => x * 100)
+      };
+    }
+
+    const initialR = 1.003;
+    const initialData = calculateData(0.02, 0.85, initialR);
+
+    Chart.register(ChartZoom);
+
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: priceChanges,
+        datasets: [
+          {
+            label: 'UniV3 IL (Inverted, %)',
+            data: initialData.impLoss,
+            borderColor: 'red',
+            tension: 0.3,
+            fill: false,
+            yAxisID: 'y1'
+          },
+          {
+            label: 'Scaled Straddle P&L (%)',
+            data: initialData.straddlePnl,
+            borderColor: 'green',
+            tension: 0.3,
+            fill: false,
+            yAxisID: 'y'
+          },
+          {
+            label: 'Hedged Result (%)',
+            data: initialData.combined,
+            borderColor: 'blue',
+            borderDash: [5, 5],
+            tension: 0.3,
+            fill: false,
+            yAxisID: 'y'
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          zoom: {
+            pan: {
+              enabled: true,
+              mode: 'xy'
+            },
+            zoom: {
+              wheel: {
+                enabled: true
+              },
+              pinch: {
+                enabled: true
+              },
+              mode: 'xy'
+            }
+          },
+          legend: {
+            position: 'bottom'
+          },
+          title: {
+            display: true,
+            text: 'UniV3 IL and Long Straddle Hedge'
+          }
+        },
+        scales: {
+          x: {
+            title: {
+              display: true,
+              text: 'Price Change (%)'
+            }
+          },
+          y: {
+            title: {
+              display: true,
+              text: 'Straddle & Net P&L (%)'
+            },
+            position: 'left',
+            min: -15,
+            max: 15
+          },
+          y1: {
+            title: {
+              display: true,
+              text: 'UniV3 IL (Inverted)'
+            },
+            position: 'right',
+            min: -15,
+            max: 15,
+            grid: {
+              drawOnChartArea: false
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            position: 'bottom'
+          },
+          title: {
+            display: true,
+            text: 'UniV3 IL and Long Straddle Hedge'
+          }
+        }
+      }
+    });
+
+    function updateChart(cost, scale, r) {
+      document.getElementById('costLabel').textContent = cost.toFixed(3);
+      document.getElementById('scaleLabel').textContent = scale.toFixed(2);
+      document.getElementById('rLabel').textContent = r.toFixed(3);
+
+      const data = calculateData(cost, scale, r);
+
+      chart.data.datasets[0].data = data.impLoss;
+      chart.data.datasets[1].data = data.straddlePnl;
+      chart.data.datasets[2].data = data.combined;
+      chart.update();
+    }
+
+    function getInputsAndUpdate() {
+      const cost = parseFloat(document.getElementById('costSlider').value);
+      const scale = parseFloat(document.getElementById('scaleSlider').value);
+      const r = parseFloat(document.getElementById('rSlider').value);
+      updateChart(cost, scale, r);
+    }
+
+    document.getElementById('costSlider').addEventListener('input', getInputsAndUpdate);
+    document.getElementById('scaleSlider').addEventListener('input', getInputsAndUpdate);
+    document.getElementById('rSlider').addEventListener('input', getInputsAndUpdate);
+  </script>
+</body>
+</html>
